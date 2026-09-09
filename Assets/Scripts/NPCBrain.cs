@@ -7,6 +7,7 @@ public class NPCBrain : MonoBehaviour
     public enum NPCState
     {
         Patrol,
+        Suspicious,
         Chase,
         Search
     }
@@ -24,6 +25,16 @@ public class NPCBrain : MonoBehaviour
 
     [SerializeField]
     private TMP_Text alertIndicator;
+
+    [Header("Voice Audio")]
+    [SerializeField]
+    private AudioSource audioSource;
+
+    [SerializeField]
+    private AudioClip suspiciousVoiceClip;
+
+    [SerializeField]
+    private AudioClip chaseVoiceClip;
 
     // ======================================
     // PATROL SETTINGS
@@ -46,6 +57,29 @@ public class NPCBrain : MonoBehaviour
     private float waypointWaitTimer = 0f;
     private bool isWaitingAtWaypoint = false;
 
+    [Header("Suspicion Settings")]
+    [SerializeField]
+    private float suspicionIncreaseRate = 20f;
+
+    [SerializeField]
+    private float suspicionIncreaseRateSprint = 45f;
+
+    [SerializeField]
+    private float suspicionDecreaseRate = 15f;
+
+    [SerializeField]
+    private float suspicionThreshold = 100f;
+
+    [SerializeField]
+    private float suspicionTurnSpeed = 5f;
+
+    [SerializeField]
+    private float suspicionMaxScale = 2f;
+
+    private float suspicionMeter;
+
+    private Vector3 alertIndicatorBaseScale = Vector3.one;
+
     // ======================================
     // CHASE SETTINGS
     // ======================================
@@ -65,19 +99,17 @@ public class NPCBrain : MonoBehaviour
     [SerializeField]
     private float searchTolerance = 0.8f;
 
-    // Challenge 2
-    [SerializeField]
-    private float searchTurnAngle = 60f;
-
     [SerializeField]
     private float searchRotationSpeed = 120f;
+
+    [SerializeField]
+    private float searchTurnAngle = 60f;
 
     private enum SearchPhase
     {
         Moving,
         LookLeft,
-        LookRight,
-        Waiting
+        LookRight
     }
 
     private SearchPhase searchPhase = SearchPhase.Moving;
@@ -85,6 +117,10 @@ public class NPCBrain : MonoBehaviour
     private Quaternion searchCenterRotation;
     private Quaternion searchLeftRotation;
     private Quaternion searchRightRotation;
+
+    [Header("Alert Broadcast Settings")]
+    [SerializeField]
+    private float alertBroadcastRadius = 15f;
 
     // ======================================
     // DEBUG
@@ -120,6 +156,12 @@ public class NPCBrain : MonoBehaviour
     {
         currentState = NPCState.Patrol;
         previousState = currentState;
+
+        if (alertIndicator != null)
+        {
+            alertIndicatorBaseScale =
+                alertIndicator.transform.localScale;
+        }
 
         GoToCurrentPatrolPoint();
         UpdateAlertIndicator();
@@ -173,27 +215,10 @@ public class NPCBrain : MonoBehaviour
 
         if (sensor.CanSeePlayer)
         {
+            suspicionMeter = 0f;
+
             ChangeState(
                 NPCState.Chase
-            );
-
-            return;
-        }
-
-        // ==================================
-        // PRIORITAS 2
-        // PLAYER TERDENGAR
-        // ==================================
-
-        if (sensor.CanHearPlayer)
-        {
-            searchTimer = searchDuration;
-
-            searchPhase =
-                SearchPhase.Moving;
-
-            ChangeState(
-                NPCState.Search
             );
 
             return;
@@ -207,6 +232,8 @@ public class NPCBrain : MonoBehaviour
         if (currentState == NPCState.Chase &&
             hasLastKnownPosition)
         {
+            suspicionMeter = 0f;
+
             searchTimer = searchDuration;
 
             searchPhase = SearchPhase.Moving;
@@ -220,6 +247,61 @@ public class NPCBrain : MonoBehaviour
 
         // ==================================
         // PRIORITAS 3
+        // ==================================
+
+        if (sensor.CanHearPlayer)
+        {
+            float increaseRate =
+                sensor.IsPlayerSprinting
+                    ? suspicionIncreaseRateSprint
+                    : suspicionIncreaseRate;
+
+            suspicionMeter +=
+                increaseRate * Time.deltaTime;
+
+            ChangeState(
+                NPCState.Suspicious
+            );
+
+            if (suspicionMeter >= suspicionThreshold)
+            {
+                suspicionMeter = 0f;
+
+                searchTimer = searchDuration;
+
+                searchPhase = SearchPhase.Moving;
+
+                ChangeState(
+                    NPCState.Search
+                );
+            }
+
+            return;
+        }
+
+        // ==================================
+        // PRIORITAS 4
+        // ==================================
+
+        if (currentState == NPCState.Suspicious)
+        {
+            suspicionMeter -=
+                suspicionDecreaseRate * Time.deltaTime;
+
+            if (suspicionMeter <= 0f)
+            {
+                suspicionMeter = 0f;
+
+                ChangeState(
+                    NPCState.Patrol
+                );
+            }
+
+            return;
+        }
+
+        // ==================================
+        // PRIORITAS 5
         // SEARCH SELESAI
         // ==================================
 
@@ -247,6 +329,11 @@ public class NPCBrain : MonoBehaviour
             case NPCState.Patrol:
 
                 Patrol();
+                break;
+
+            case NPCState.Suspicious:
+
+                Suspicious();
                 break;
 
             case NPCState.Chase:
@@ -331,6 +418,53 @@ public class NPCBrain : MonoBehaviour
     }
 
     // ======================================
+    // SUSPICIOUS
+    // ======================================
+
+    // Menoleh ke arah suara
+    private void Suspicious()
+    {
+        Vector3 direction =
+            sensor.LastHeardPosition -
+            transform.position;
+
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude > 0.0001f)
+        {
+            Quaternion targetRotation =
+                Quaternion.LookRotation(direction);
+
+            transform.rotation =
+                Quaternion.Slerp(
+                    transform.rotation,
+                    targetRotation,
+                    suspicionTurnSpeed * Time.deltaTime
+                );
+        }
+
+        UpdateAlertIndicatorScale();
+    }
+
+    // Perbesar indikator sesuai progress
+    private void UpdateAlertIndicatorScale()
+    {
+        if (alertIndicator == null)
+        {
+            return;
+        }
+
+        float progress =
+            Mathf.Clamp01(
+                suspicionMeter / suspicionThreshold
+            );
+
+        alertIndicator.transform.localScale =
+            alertIndicatorBaseScale *
+            Mathf.Lerp(1f, suspicionMaxScale, progress);
+    }
+
+    // ======================================
     // CHASE
     // ======================================
 
@@ -356,16 +490,9 @@ public class NPCBrain : MonoBehaviour
     {
         agent.speed = patrolSpeed;
 
-        // ==================================
-        // FASE 1
-        // Menuju posisi terakhir Player
-        // ==================================
-
         if (searchPhase == SearchPhase.Moving)
         {
-            agent.SetDestination(
-                lastKnownPosition
-            );
+            agent.SetDestination(lastKnownPosition);
 
             if (!agent.pathPending &&
                 agent.remainingDistance <= searchTolerance)
@@ -379,32 +506,18 @@ public class NPCBrain : MonoBehaviour
                 // Hitung arah kiri
                 searchLeftRotation =
                     searchCenterRotation *
-                    Quaternion.Euler(
-                        0f,
-                        -searchTurnAngle,
-                        0f
-                    );
+                    Quaternion.Euler(0f, -searchTurnAngle, 0f);
 
                 // Hitung arah kanan
                 searchRightRotation =
                     searchCenterRotation *
-                    Quaternion.Euler(
-                        0f,
-                        searchTurnAngle,
-                        0f
-                    );
+                    Quaternion.Euler(0f, searchTurnAngle, 0f);
 
-                searchPhase =
-                    SearchPhase.LookLeft;
+                searchPhase = SearchPhase.LookLeft;
             }
 
             return;
         }
-
-        // ==================================
-        // FASE 2
-        // Lihat ke kiri
-        // ==================================
 
         if (searchPhase == SearchPhase.LookLeft)
         {
@@ -412,25 +525,14 @@ public class NPCBrain : MonoBehaviour
                 Quaternion.RotateTowards(
                     transform.rotation,
                     searchLeftRotation,
-                    searchRotationSpeed *
-                    Time.deltaTime
+                    searchRotationSpeed * Time.deltaTime
                 );
 
-            if (Quaternion.Angle(
-                    transform.rotation,
-                    searchLeftRotation) < 1f)
-            {
-                searchPhase =
-                    SearchPhase.LookRight;
-            }
+            if (Quaternion.Angle(transform.rotation, searchLeftRotation) < 1f)
+                searchPhase = SearchPhase.LookRight;
 
             return;
         }
-
-        // ==================================
-        // FASE 3
-        // Lihat ke kanan
-        // ==================================
 
         if (searchPhase == SearchPhase.LookRight)
         {
@@ -438,29 +540,13 @@ public class NPCBrain : MonoBehaviour
                 Quaternion.RotateTowards(
                     transform.rotation,
                     searchRightRotation,
-                    searchRotationSpeed *
-                    Time.deltaTime
+                    searchRotationSpeed * Time.deltaTime
                 );
 
-            if (Quaternion.Angle(
-                    transform.rotation,
-                    searchRightRotation) < 1f)
-            {
-                searchPhase =
-                    SearchPhase.Waiting;
-            }
+            if (Quaternion.Angle(transform.rotation, searchRightRotation) < 1f)
+                searchTimer -= Time.deltaTime;
 
             return;
-        }
-
-        // ==================================
-        // FASE 4
-        // Menunggu sebelum kembali PATROL
-        // ==================================
-
-        if (searchPhase == SearchPhase.Waiting)
-        {
-            searchTimer -= Time.deltaTime;
         }
     }
 
@@ -477,13 +563,15 @@ public class NPCBrain : MonoBehaviour
             return;
         }
 
-        previousState =
-            currentState;
+        NPCState previous = currentState;
+
+        previousState = previous;
 
         currentState =
             newState;
 
         UpdateAlertIndicator();
+        PlayStateVoice(currentState);
 
         // Jika meninggalkan PATROL,
         // batalkan timer menunggu waypoint
@@ -492,6 +580,33 @@ public class NPCBrain : MonoBehaviour
             isWaitingAtWaypoint = false;
 
             waypointWaitTimer = 0f;
+        }
+
+        // Masuk SUSPICIOUS, hentikan gerak
+        if (currentState == NPCState.Suspicious)
+        {
+            agent.ResetPath();
+        }
+
+        // Keluar SUSPICIOUS, kembalikan skala
+        if (previousState == NPCState.Suspicious &&
+            alertIndicator != null)
+        {
+            alertIndicator.transform.localScale =
+                alertIndicatorBaseScale;
+        }
+
+        // Masuk SEARCH, mulai dari fase jalan
+        if (currentState == NPCState.Search)
+        {
+            searchPhase = SearchPhase.Moving;
+        }
+
+        // Masuk CHASE pertama kali, sebar alert
+        if (currentState == NPCState.Chase &&
+            previous != NPCState.Chase)
+        {
+            BroadcastAlert(sensor.Player.position);
         }
 
         Debug.Log(
@@ -510,6 +625,56 @@ public class NPCBrain : MonoBehaviour
         }
     }
 
+    // sebar info lokasi ke NPC lain di sekitar
+    private void BroadcastAlert(Vector3 alertPosition)
+    {
+        NPCBrain[] allGuards = FindObjectsOfType<NPCBrain>();
+
+        foreach (NPCBrain guard in allGuards)
+        {
+            if (guard == this)
+                continue;
+
+            float distance = Vector3.Distance(
+                transform.position,
+                guard.transform.position
+            );
+
+            if (distance <= alertBroadcastRadius)
+                guard.ReceiveAlert(alertPosition);
+        }
+    }
+
+    // terima info dari NPC lain yang lihat player duluan
+    public void ReceiveAlert(Vector3 alertPosition)
+    {
+        if (currentState == NPCState.Chase)
+            return;
+
+        lastKnownPosition = alertPosition;
+        hasLastKnownPosition = true;
+        searchTimer = searchDuration;
+
+        ChangeState(NPCState.Search);
+    }
+
+    // mainkan suara sekali saat masuk state tertentu
+    private void PlayStateVoice(NPCState state)
+    {
+        if (audioSource == null)
+            return;
+
+        AudioClip clip = null;
+
+        if (state == NPCState.Suspicious)
+            clip = suspiciousVoiceClip;
+        else if (state == NPCState.Chase)
+            clip = chaseVoiceClip;
+
+        if (clip != null)
+            audioSource.PlayOneShot(clip);
+    }
+
     private void UpdateAlertIndicator()
     {
         if (alertIndicator == null)
@@ -519,6 +684,11 @@ public class NPCBrain : MonoBehaviour
         {
             case NPCState.Patrol:
                 alertIndicator.gameObject.SetActive(false);
+                break;
+
+            case NPCState.Suspicious:
+                alertIndicator.gameObject.SetActive(true);
+                alertIndicator.text = "?";
                 break;
 
             case NPCState.Chase:
@@ -545,6 +715,12 @@ public class NPCBrain : MonoBehaviour
 
                 Gizmos.color =
                     Color.green;
+                break;
+
+            case NPCState.Suspicious:
+
+                Gizmos.color =
+                    Color.yellow;
                 break;
 
             case NPCState.Chase:

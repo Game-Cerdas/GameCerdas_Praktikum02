@@ -29,14 +29,6 @@ public class NPCSensor : MonoBehaviour
     private LayerMask obstacleMask;
 
     // ======================================
-    // HEARING SETTINGS
-    // ======================================
-
-    [Header("Hearing Settings")]
-    [SerializeField]
-    private float hearingRadius = 6f;
-
-    // ======================================
     // EYE SETTINGS
     // ======================================
 
@@ -68,6 +60,10 @@ public class NPCSensor : MonoBehaviour
         get;
         private set;
     }
+
+    // Status sprint player
+    public bool IsPlayerSprinting =>
+        playerNoise != null && playerNoise.IsSprinting;
 
     // ======================================
     // UPDATE
@@ -170,7 +166,7 @@ public class NPCSensor : MonoBehaviour
                 player.position
             );
 
-        if (distanceToPlayer <= hearingRadius)
+        if (distanceToPlayer <= playerNoise.NoiseRadius)
         {
             CanHearPlayer = true;
 
@@ -218,13 +214,16 @@ public class NPCSensor : MonoBehaviour
         );
 
         // HEARING RADIUS
-        Gizmos.color =
-            Color.cyan;
+        if (playerNoise != null)
+        {
+            Gizmos.color =
+                Color.cyan;
 
-        Gizmos.DrawWireSphere(
-            transform.position,
-            hearingRadius
-        );
+            Gizmos.DrawWireSphere(
+                transform.position,
+                playerNoise.NoiseRadius
+            );
+        }
 
         // PLAYER VISIBLE
         if (player != null &&
